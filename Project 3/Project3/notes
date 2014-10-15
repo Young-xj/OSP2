@@ -1,0 +1,22 @@
+When your do_dispatch()is invoked, 
+
+after checking whether there was a thread running 
+(and calculating how much time is remaining for that thread by taking the difference of the current time, HClock.get() and the lastDispatch time of that thread), 
+
+
+you will check the ready queue to see if there is a thread that has a shorter remaining burst time. 
+
+If the remaining burst time for the current thread is as short or shorter than the estimated burst time of the threads in the ready queue 
+	then continue with the current thread and return SUCCESS. 
+
+	If if the current burst of the current thread is less than 2 milliseconds, 
+		then continue with the current thread. 
+		Do not change the value of lastDispatch since you are continuing to run the current thread. 
+
+Else
+	preempt the current thread and dispatch the thread in the ready queue with the shortest estimated burst time
+	and return SUCCESS. 
+	Be sure to update lastDispatch for this new thread. 
+
+If there is no current thread running and no threads are available in the ready queue 
+	then set PTBR=NULL and return FAILURE. 

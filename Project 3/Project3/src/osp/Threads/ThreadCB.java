@@ -13,6 +13,7 @@
 
 package osp.Threads;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Vector;
 import java.util.Enumeration;
@@ -34,7 +35,11 @@ import osp.Resources.*;
 */
 public class ThreadCB extends IflThreadCB 
 {
-    private static GenericList readyQueue;
+    private static ArrayList<ThreadCB> readyQueue;
+    private int lastCpuBurst,
+    			estimatedBurstTime;
+    private long lastDispatch;
+    
 
     /**
        The thread constructor. Must call 
@@ -58,7 +63,7 @@ public class ThreadCB extends IflThreadCB
     */
     public static void init()
     {
-        readyQueue = new GenericList();
+        readyQueue = new ArrayList();
     }
 
     /** 
@@ -81,30 +86,34 @@ public class ThreadCB extends IflThreadCB
     public static ThreadCB do_create(TaskCB task)
     {
         ThreadCB thread = null;
-        if(task == null)                                    // #2
+
+        
+        if(task == null)                                    
         {
             ThreadCB.dispatch();
             return null;
         }
         
-        if(task.getThreadCount() >= MaxThreadsPerTask)      // #3
+        if(task.getThreadCount() >= MaxThreadsPerTask)      
         {
             ThreadCB.dispatch();
             return null;
         }
 
-        thread = new ThreadCB();                            // #3b
-        thread.setPriority(task.getPriority());             // #4
-        thread.setStatus(ThreadReady);                      // #5
-        thread.setTask(task);                               // #6
-        if(task.addThread(thread) == 0)                     // #7
+        thread = new ThreadCB();   
+        thread.lastCpuBurst = 10;					// #1a
+        thread.estimatedBurstTime = 10;				// #1a
+        thread.setPriority(task.getPriority());             
+        thread.setStatus(ThreadReady);                      
+        thread.setTask(task);                               
+        if(task.addThread(thread) == 0)                     
         {
             ThreadCB.dispatch();
             return null;
         }
-        readyQueue.append(thread);                          // #8
-        ThreadCB.dispatch();                                // #9
-        return thread;                                      // #10
+        readyQueue.add(thread);                          
+        ThreadCB.dispatch();                                
+        return thread;                                      
         
     }
 
@@ -123,12 +132,12 @@ public class ThreadCB extends IflThreadCB
     */
     public void do_kill()
     {
-        switch(getStatus())                                                 // #1
+        switch(getStatus())                                                 
         {
-            case ThreadReady:                                               // #2
+            case ThreadReady:                                               
                 readyQueue.remove(this);
             break;
-            case ThreadRunning:                                             // #3
+            case ThreadRunning:                                             
                 ThreadCB thread = null;
                 try
                 {
@@ -136,7 +145,17 @@ public class ThreadCB extends IflThreadCB
                     if(this == thread)
                     {
                         MMU.setPTBR(null);
-                        getTask().setCurrentThread(null);					// Is this needed?
+                        getTask().setCurrentThread(null);
+                        
+                        
+                        lastCpuBurst = (int)(HClock.get() - lastDispatch); 					// #2
+																							// Check the casting of this
+                        																	// Check particular location of this one
+                        estimatedBurstTime = (int)((0.75*lastCpuBurst)+(0.25*estimatedBurstTime)); // #1 #3
+                        if(estimatedBurstTime < 5)
+                        {
+                        	estimatedBurstTime = 5;
+                        }
                     }
                 }
                 catch(NullPointerException e){}
@@ -144,17 +163,18 @@ public class ThreadCB extends IflThreadCB
         }
      
         
-        getTask().removeThread(this);                                       // #4
-        setStatus(ThreadKill);                                              // #5
+        getTask().removeThread(this);                                       
+        setStatus(ThreadKill);
+
         
-        for(int i = 0; i<Device.getTableSize(); i++)                        // #6
+        for(int i = 0; i<Device.getTableSize(); i++)                        
         {
             Device.get(i).cancelPendingIO(this);
         }
         
-        ResourceCB.giveupResources(this);                                   // #7 
-        ThreadCB.dispatch();                                                // #8
-        if(getTask().getThreadCount() == 0)                                 // #9
+        ResourceCB.giveupResources(this);                                   
+        ThreadCB.dispatch();                                                
+        if(getTask().getThreadCount() == 0)                                 
         {
             getTask().kill();
         }
@@ -179,8 +199,8 @@ public class ThreadCB extends IflThreadCB
     */
     public void do_suspend(Event event)
     {
-        int status = getStatus();                                       // #1
-        if(status>=ThreadWaiting)                                       // #4
+        int status = getStatus();                                       
+        if(status>=ThreadWaiting)                                       
         {
             setStatus(getStatus()+1);
             
@@ -192,7 +212,7 @@ public class ThreadCB extends IflThreadCB
          * If we were not careful about how we wrote this, the thread could go into 
          * both if statements, which could unneccesarily increment the ThreadWaiting state.
          */
-        else if(status == ThreadRunning)                                // #2
+        else if(status == ThreadRunning)                                
         {
             ThreadCB thread = null;
             try
@@ -202,7 +222,14 @@ public class ThreadCB extends IflThreadCB
                 {
                     MMU.setPTBR(null);
                     getTask().setCurrentThread(null);
-                    setStatus(ThreadWaiting);                           // #3 Check the location of this?
+                    setStatus(ThreadWaiting);
+                    lastCpuBurst = (int)(HClock.get() - lastDispatch); 					// #2
+                    																	// Check the casting of this
+                    estimatedBurstTime = (int)((0.75*lastCpuBurst)+(0.25*estimatedBurstTime)); // #3
+                    if(estimatedBurstTime < 5)
+                    {
+                    	estimatedBurstTime = 5;
+                    }
                 }
             }
             catch(NullPointerException e){}
@@ -213,7 +240,7 @@ public class ThreadCB extends IflThreadCB
 
         if(!readyQueue.contains(this))
         {
-            event.addThread(this);                                      // #6
+            event.addThread(this);                                      
         }
         else
         {
@@ -221,7 +248,7 @@ public class ThreadCB extends IflThreadCB
         }
         
 
-        ThreadCB.dispatch();                                            // #7
+        ThreadCB.dispatch();                                            
     }
 
     /** Resumes the thread.
@@ -254,7 +281,7 @@ public class ThreadCB extends IflThreadCB
         
         // Put the thread on the ready queue, if appropriate
         if (getStatus() == ThreadReady) {
-            readyQueue.append(this);
+            readyQueue.add(this);
         }
         
         dispatch(); // dispatch a thread
@@ -280,19 +307,65 @@ public class ThreadCB extends IflThreadCB
         
         try
         {
-            thread = MMU.getPTBR().getTask().getCurrentThread();    // #1
+            thread = MMU.getPTBR().getTask().getCurrentThread();
         }
         catch(NullPointerException e){}
         
-        if(thread != null)                                          // #2
+        if(thread != null)                                          
         {
-            thread.getTask().setCurrentThread(null);
-            MMU.setPTBR(null);
-            thread.setStatus(ThreadReady);
-            readyQueue.append(thread);
+
+            
+            
+            int timeRemaining = (int)(HClock.get() - thread.lastDispatch);
+            
+            int indexOfShortest = -1;
+            if(timeRemaining > 2)
+            {
+	            for(int x = 0; x< readyQueue.size(); x++)
+	            {
+	            	if(readyQueue.get(x).getEstimatedBurstTime() < timeRemaining)
+	            	{
+	            		indexOfShortest = x;
+	            	}
+	            }
+	            
+	            if(indexOfShortest != -1)
+	            {
+	        		// Preempt the current thread
+	        		thread.setStatus(ThreadReady);
+	                thread.getTask().setCurrentThread(null);
+	                MMU.setPTBR(null);
+	                
+	                readyQueue.get(indexOfShortest).dispatch();
+	                readyQueue.get(indexOfShortest).lastDispatch = HTimer.get();
+	                return SUCCESS;
+	            }
+	            
+	            else
+	            {
+	            	return SUCCESS;
+	            }
+            }
+            else
+            {
+            	return SUCCESS;
+            }
+           
+
+            
+            
+            
+            
+            
+            // In project 2 originally
+            //thread.setStatus(ThreadReady);
+            //readyQueue.add(thread);
+            
+            
+            
         }
         
-        if(readyQueue.isEmpty())                                    // #4
+        if(readyQueue.isEmpty())                                    
         {
             MMU.setPTBR(null);
             return FAILURE;
@@ -300,15 +373,21 @@ public class ThreadCB extends IflThreadCB
         
         else
         {
-            thread = (ThreadCB) readyQueue.removeHead();            // #3
-            MMU.setPTBR(thread.getTask().getPageTable());           // #5
-            thread.getTask().setCurrentThread(thread);              // #6
-            thread.setStatus(ThreadRunning);                        // #7
-
+            thread = (ThreadCB) readyQueue.remove(0);
+            MMU.setPTBR(thread.getTask().getPageTable());
+            thread.getTask().setCurrentThread(thread);
+            thread.setStatus(ThreadRunning);
         }
         
-        HTimer.set(50);                                             // #8
-        return SUCCESS;                                             // #9
+        
+        
+        
+        
+        thread.lastDispatch = HTimer.get(); // #2
+        // # 5 Removed timer because not doing RR
+        //HTimer.set(50);                                            
+
+        return SUCCESS;
     }
 
     /**
@@ -341,6 +420,8 @@ public class ThreadCB extends IflThreadCB
     /*
        Feel free to add methods/fields to improve the readability of your code
     */
+    public int getEstimatedBurstTime(){ return estimatedBurstTime; }
+
 
 }
 
